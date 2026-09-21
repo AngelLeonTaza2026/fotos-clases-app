@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: #08080a;
+  /* Resplandor sutil detrás del contenido, para que el fondo no sea
+     un negro plano. */
+  background-image:
+    radial-gradient(60rem 40rem at 50% -10%, rgba(251, 191, 36, 0.10), transparent 70%),
+    radial-gradient(40rem 30rem at 10% 110%, rgba(99, 102, 241, 0.08), transparent 70%);
+  background-attachment: fixed;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto,
+    'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Respeta la muesca y la barra inferior del iPhone (necesita el
+   viewport-fit=cover que ya está en index.html). */
+.safe-top {
+  padding-top: max(1.25rem, env(safe-area-inset-top));
+}
+
+.safe-bottom {
+  padding-bottom: max(1.5rem, calc(env(safe-area-inset-bottom) + 0.75rem));
+}
+
+/* Los botones no deben sentirse como texto seleccionable: en el celular
+   eso arruina la sensación de app nativa. */
+button,
+label[role='button'] {
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-rise {
+  animation: rise 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise {
+    animation: none;
+  }
+}
