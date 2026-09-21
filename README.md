@@ -1,70 +1,74 @@
 # Fotos de Clases
 
-App para el curso de Arquitectura Empresarial (puntos extra). Toma una foto
-de la pizarra desde el celular y la sube automáticamente a Google Drive,
-organizada en `Fotos Clases / <Curso> / Semana <n>`, detectando el curso y
-la semana según tu horario y la fecha/hora en que tomas la foto.
+App web para el curso de Arquitectura Empresarial. Tomas una foto de la
+pizarra desde el celular y se sube sola a Google Drive, ya organizada en
+`Fotos Clases / <Curso> / Semana <n>` — detectando el curso y la semana
+según el horario y la fecha/hora en que tomaste la foto.
 
-## 1. Terminar de configurar Google Cloud Console
+**En vivo:** https://fotos-clases-app.vercel.app
 
-Ya creaste el proyecto y habilitaste la API de Drive. Ahora:
+## Cómo funciona
 
-1. Ve a **APIs y servicios → Credenciales → Crear credenciales → ID de
-   cliente de OAuth**.
-2. Tipo de aplicación: **Aplicación web**.
-3. En **Orígenes de JavaScript autorizados** agrega:
-   - `http://localhost:5173` (para probar en tu compu)
-   - `https://TU-PROYECTO.vercel.app` (la URL que te dé Vercel en el paso 3)
-4. No hace falta configurar "URIs de redireccionamiento" (esta app usa el
-   flujo de token de Google Identity Services, no redirección).
-5. Copia el **Client ID** que te genera (termina en
-   `.apps.googleusercontent.com`).
-6. En **Pantalla de consentimiento OAuth**, en la sección "Usuarios de
-   prueba", agrega tu propio correo de Google (el que uses para el Drive
-   donde quieres que se guarden las fotos). Mientras la app esté en modo
-   "Prueba" solo funcionará para los correos que agregues ahí — está bien,
-   es de uso personal.
+Cuando eliges una foto, la app lee la fecha y hora del momento y:
 
-## 2. Probar en tu compu
+1. **Detecta el curso** — busca en el horario (`src/schedule.js`) el bloque
+   que corresponde al día y la hora actual, con 20 minutos de tolerancia
+   antes y después, por si tomas la foto justo al empezar o al terminar.
+2. **Calcula la semana** — cuenta los días transcurridos desde el lunes de
+   la semana 1 del ciclo y los divide entre 7.
+3. **Crea las carpetas que falten** en Drive y sube la foto ahí.
+
+Ambos valores se muestran antes de subir y se pueden corregir a mano si la
+detección falla (por ejemplo, si tomas la foto en la noche).
+
+## Stack
+
+React + Vite + Tailwind. Sin backend: el navegador habla directo con la API
+de Drive usando Google Identity Services. Se despliega como sitio estático.
+
+El permiso que pide es `drive.file`, el más acotado que existe: la app solo
+puede ver y modificar los archivos y carpetas **que ella misma crea**. No
+tiene acceso al resto del Drive.
+
+## Estructura
+
+| Archivo | Qué hace |
+|---|---|
+| `src/schedule.js` | El horario del ciclo. **Es el único archivo que hay que editar si cambia el horario.** |
+| `src/utils/matchSchedule.js` | Encuentra qué clase corresponde a una fecha/hora. |
+| `src/utils/weekCalculator.js` | Calcula el número de semana del ciclo. |
+| `src/utils/agenda.js` | Clases del día, progreso de la clase en curso, cuenta regresiva a la siguiente. |
+| `src/utils/courseTheme.js` | Asigna un color a cada curso automáticamente. |
+| `src/driveApi.js` | Autenticación con Google y subida a Drive. |
+| `src/App.jsx` | Interfaz. |
+
+## Correr en local
 
 ```bash
 npm install
-cp .env.example .env
-# pega tu Client ID en .env
+cp .env.example .env   # pega tu Client ID de Google dentro
 npm run dev
 ```
 
-Abre `http://localhost:5173`. Como es solo para probar en la compu, la
-cámara no se abrirá directo (no hay cámara en la laptop probablemente),
-pero puedes seleccionar una foto de prueba desde tus archivos para
-verificar que la conexión con Drive y la subida funcionan.
-
-## 3. Desplegar en Vercel
-
-1. Sube esta carpeta a un repositorio de GitHub (nuevo repo, `git init`,
-   `git add .`, `git commit`, `git push`).
-2. En Vercel: **Add New → Project**, importa ese repositorio.
-3. En **Environment Variables**, agrega:
-   - `VITE_GOOGLE_CLIENT_ID` = tu Client ID de Google.
-4. Deploy. Vercel te da una URL tipo `https://fotos-clases-app.vercel.app`.
-5. Vuelve al paso 1 y agrega esa URL exacta a los "Orígenes de JavaScript
-   autorizados" en Google Cloud Console (si no la habías puesto ya).
-
-## 4. Usar desde el celular
-
-1. Abre la URL de Vercel en Chrome/Safari de tu celular.
-2. Opcional: en el menú del navegador elige "Agregar a pantalla de inicio"
-   para que quede como un ícono más, como una app.
-3. Toca "Conectar con Google Drive" la primera vez (te va a pedir permiso;
-   como está en modo prueba, si Google muestra una advertencia de "app no
-   verificada", dale a "Avanzado → Ir a Fotos de Clases (no seguro)" — es
-   normal para apps personales que no se han publicado).
-4. Toca "Tomar foto", se abre la cámara, tomas la foto de la pizarra.
-5. La app detecta el curso y la semana automáticamente. Revisa que estén
-   bien (puedes corregirlos con los selectores) y toca "Subir a Drive".
+Abre `http://localhost:5173`. En la laptop el botón "Tomar foto" abre el
+selector de archivos en vez de la cámara; desde el celular sí abre la cámara.
 
 ## Si el horario cambia
 
-Todo el horario está en `src/schedule.js`. Es una lista simple de bloques
-(día, curso, hora de inicio, hora de fin) — solo edita esa lista, no hace
-falta tocar el resto del código.
+Edita la lista `SCHEDULE` en `src/schedule.js` y, si es un ciclo nuevo,
+actualiza también `SEMESTER_START` (el lunes de la semana 1). No hace falta
+tocar nada más: los colores de curso se asignan solos y los selectores se
+arman desde esa misma lista.
+
+Al hacer `git push`, Vercel vuelve a desplegar automáticamente.
+
+## Configuración (ya hecha, como referencia)
+
+- **Google Cloud** — API de Drive habilitada, pantalla de consentimiento en
+  modo *Interno*, y un ID de cliente OAuth tipo "Aplicación web" con estos
+  orígenes de JavaScript autorizados:
+  - `http://localhost:5173`
+  - `https://fotos-clases-app.vercel.app`
+- **Vercel** — variable de entorno `VITE_GOOGLE_CLIENT_ID` con ese Client ID.
+
+Al estar en modo *Interno*, solo funciona con cuentas de la institución.
