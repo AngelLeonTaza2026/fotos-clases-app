@@ -196,7 +196,7 @@ function buildFileName(file, week) {
  * Sube una foto a Drive dentro de "Fotos Clases/<curso>/Semana <n>",
  * creando las carpetas que hagan falta.
  */
-export async function uploadPhoto({ file, course, week }) {
+export async function uploadPhoto({ file, course, week, onProgress = () => {} }) {
   const rootId = await getOrCreateFolder(ROOT_FOLDER_NAME, null)
   const courseId = await getOrCreateFolder(course, rootId)
   const weekId = await getOrCreateFolder(`Semana ${week}`, courseId)
@@ -212,19 +212,38 @@ export async function uploadPhoto({ file, course, week }) {
   form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }))
   form.append('file', file)
 
-  const res = await fetch(
-    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink',
-    {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: form,
+  // Usamos XMLHttpRequest en vez de fetch porque es la única forma de leer
+  // el progreso real de una subida en el navegador: fetch no expone eventos
+  // de progreso al enviar el cuerpo.
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open(
+      'POST',
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink'
+    )
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(event.loaded / event.total)
     }
-  )
 
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Error subiendo la foto (${res.status}): ${text}`)
-  }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(1)
+        try {
+          resolve(JSON.parse(xhr.responseText))
+        } catch {
+          resolve({})
+        }
+      } else {
+        reject(new Error(`Error subiendo la foto (${xhr.status}): ${xhr.responseText}`))
+      }
+    }
 
-  return res.json()
+    xhr.onerror = () =>
+      reject(new Error('Se perdió la conexión mientras se subía la foto. Revisa tu internet.'))
+    xhr.ontimeout = () => reject(new Error('La subida tardó demasiado. Intenta de nuevo.'))
+
+    xhr.send(form)
+  })
 }

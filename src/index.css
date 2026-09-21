@@ -65,3 +65,99 @@ label[role='button'] {
     animation: none;
   }
 }
+
+/* --------------------------------------------------- animaciones de la UI */
+
+@keyframes sheet-up {
+  from {
+    opacity: 0;
+    transform: translateY(28px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-sheet {
+  animation: sheet-up 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fade {
+  animation: fade-in 0.28s ease-out both;
+}
+
+/* El check de "listo" se dibuja solo, en vez de aparecer de golpe. */
+@keyframes draw-check {
+  from {
+    stroke-dashoffset: 30;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.draw-check {
+  stroke-dasharray: 30;
+  animation: draw-check 0.5s 0.15s cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+
+@keyframes ring-pulse {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.65;
+  }
+  70% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.ring-pulse {
+  animation: ring-pulse 1.6s ease-out infinite;
+}
+
+/* Barra de la clase en curso: brillo que recorre el progreso. */
+@keyframes sheen {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+.animate-sheen {
+  animation: sheen 2.4s ease-in-out infinite;
+}
+
+/* Oculta la barra de scroll en las filas horizontales (chips de semana). */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-sheet,
+  .animate-fade,
+  .draw-check,
+  .ring-pulse,
+  .animate-sheen {
+    animation: none;
+  }
+}
