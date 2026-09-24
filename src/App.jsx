@@ -11,12 +11,14 @@ import {
   formatUntil,
 } from './utils/agenda.js'
 import { courseTheme, withAlpha } from './utils/courseTheme.js'
-import { initGoogleAuth, requestAccessToken, uploadPhoto } from './driveApi.js'
+import { initGoogleAuth, requestAccessToken, uploadPhoto, createSummaryDoc } from './driveApi.js'
+import { summarizePhoto } from './summaryApi.js'
 
 const STATUS = {
   IDLE: 'idle',
   REVIEW: 'review',
   UPLOADING: 'uploading',
+  SUMMARIZING: 'summarizing',
   DONE: 'done',
   ERROR: 'error',
 }
@@ -411,6 +413,9 @@ export default function App() {
   const [week, setWeek] = useState(1)
   const [progress, setProgress] = useState(0)
   const [driveLink, setDriveLink] = useState(null)
+  const [docLink, setDocLink] = useState(null)
+  const [summary, setSummary] = useState('')
+  const [summaryError, setSummaryError] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [history, setHistory] = useState(loadHistory())
   const [now, setNow] = useState(() => new Date())
@@ -461,6 +466,9 @@ export default function App() {
     setCourse(match ? match.course : COURSES[0])
     setWeek(getWeekNumber(ahora) || 1)
     setDriveLink(null)
+    setDocLink(null)
+    setSummary('')
+    setSummaryError('')
     setProgress(0)
     setStatus(STATUS.REVIEW)
     setErrorMsg('')
@@ -470,6 +478,9 @@ export default function App() {
     setPendingFile(null)
     setPreview(null)
     setDriveLink(null)
+    setDocLink(null)
+    setSummary('')
+    setSummaryError('')
     setProgress(0)
     setStatus(STATUS.IDLE)
     setErrorMsg('')
@@ -479,36 +490,69 @@ export default function App() {
   async function handleConfirmUpload() {
     if (!pendingFile) return
     setProgress(0)
+    setSummary('')
+    setSummaryError('')
     setStatus(STATUS.UPLOADING)
+
+    // Paso 1: subir la foto. Esto sí es crítico — si falla, error.
+    let uploaded
     try {
-      const result = await uploadPhoto({
+      uploaded = await uploadPhoto({
         file: pendingFile,
         course,
         week,
         onProgress: setProgress,
       })
-      const entry = {
-        course,
-        week,
-        date: new Date().toLocaleString('es-PE', {
-          day: '2-digit',
-          month: 'short',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-        }),
-        link: result?.webViewLink || null,
-      }
-      const newHistory = [entry, ...history]
-      setHistory(newHistory)
-      saveHistory(newHistory)
-      setDriveLink(result?.webViewLink || null)
-      setStatus(STATUS.DONE)
+      setDriveLink(uploaded?.webViewLink || null)
     } catch (err) {
       console.error(err)
       setErrorMsg(err.message || 'Ocurrió un error al subir la foto.')
       setStatus(STATUS.ERROR)
+      return
     }
+
+    // Paso 2: el resumen. A partir de aquí la foto YA está guardada, así
+    // que ningún fallo puede mandarnos a la pantalla de error: como mucho
+    // avisamos que el resumen no salió.
+    setStatus(STATUS.SUMMARIZING)
+    let resumen = ''
+    let enlaceDoc = null
+    try {
+      resumen = await summarizePhoto({ file: pendingFile, course, week })
+      setSummary(resumen)
+
+      const doc = await createSummaryDoc({
+        summary: resumen,
+        course,
+        week,
+        folderId: uploaded.folderId,
+        photoName: uploaded.photoName,
+        photoLink: uploaded.webViewLink,
+      })
+      enlaceDoc = doc?.webViewLink || null
+      setDocLink(enlaceDoc)
+    } catch (err) {
+      console.error(err)
+      setSummaryError(err.message || 'No se pudo generar el resumen.')
+    }
+
+    const entry = {
+      course,
+      week,
+      date: new Date().toLocaleString('es-PE', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }),
+      link: uploaded?.webViewLink || null,
+      docLink: enlaceDoc,
+    }
+    const newHistory = [entry, ...history]
+    setHistory(newHistory)
+    saveHistory(newHistory)
+    setStatus(STATUS.DONE)
   }
 
   return (
@@ -621,17 +665,29 @@ export default function App() {
                             Semana {h.week} · {h.date}
                           </p>
                         </div>
-                        {h.link && (
-                          <a
-                            href={h.link}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium active:bg-white/5"
-                            style={{ color: t.accent }}
-                          >
-                            Ver
-                          </a>
-                        )}
+                        <div className="flex shrink-0 items-center gap-1">
+                          {h.link && (
+                            <a
+                              href={h.link}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-lg px-2 py-1 text-xs font-medium active:bg-white/5"
+                              style={{ color: t.accent }}
+                            >
+                              Foto
+                            </a>
+                          )}
+                          {h.docLink && (
+                            <a
+                              href={h.docLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-lg px-2 py-1 text-xs font-medium text-zinc-400 active:bg-white/5"
+                            >
+                              Resumen
+                            </a>
+                          )}
+                        </div>
                       </div>
                     )
                   })}
@@ -732,6 +788,24 @@ export default function App() {
                 </div>
               )}
 
+              {status === STATUS.SUMMARIZING && (
+                <div className="flex min-h-[70vh] flex-col items-center justify-center text-center">
+                  <div className="relative flex h-20 w-20 items-center justify-center">
+                    <span
+                      className="ring-pulse absolute h-20 w-20 rounded-full"
+                      style={{ backgroundColor: withAlpha(theme.accent, 0.2) }}
+                    />
+                    <Spinner className="relative h-9 w-9" />
+                  </div>
+                  <p className="mt-6 text-[15px] font-medium text-zinc-200">
+                    Leyendo la pizarra…
+                  </p>
+                  <p className="mt-1.5 max-w-[15rem] text-sm text-zinc-500">
+                    La foto ya está guardada. Esto solo genera el resumen.
+                  </p>
+                </div>
+              )}
+
               {status === STATUS.DONE && (
                 <div className="flex min-h-[70vh] flex-col items-center justify-center text-center">
                   <div className="relative flex h-20 w-20 items-center justify-center">
@@ -768,6 +842,47 @@ export default function App() {
                   <p className="mt-2 text-sm text-zinc-400">{course}</p>
                   <p className="text-sm text-zinc-500">Semana {week}</p>
 
+                  {summary && (
+                    <Card className="mt-6 w-full p-4 text-left">
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                        Resumen
+                      </p>
+                      <div className="space-y-1.5">
+                        {summary
+                          .split('\n')
+                          .map((l) => l.trim())
+                          .filter(Boolean)
+                          .map((line, i) => {
+                            const bullet = line.startsWith('- ') || line.startsWith('• ')
+                            return (
+                              <p
+                                key={i}
+                                className={`text-[13px] leading-relaxed ${
+                                  bullet ? 'pl-3 text-zinc-400' : 'font-medium text-zinc-200'
+                                }`}
+                              >
+                                {bullet ? `· ${line.slice(2).trim()}` : line}
+                              </p>
+                            )
+                          })}
+                      </div>
+                    </Card>
+                  )}
+
+                  {summaryError && (
+                    <div className="mt-6 flex w-full gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 text-left">
+                      <IconAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+                      <div>
+                        <p className="text-sm font-medium text-amber-200">
+                          La foto se guardó, pero el resumen no
+                        </p>
+                        <p className="mt-1 text-xs leading-relaxed text-amber-200/70">
+                          {summaryError}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="mt-9 w-full space-y-3">
                     <button
                       onClick={resetFlow}
@@ -781,16 +896,28 @@ export default function App() {
                     >
                       Tomar otra foto
                     </button>
-                    {driveLink && (
-                      <a
-                        href={driveLink}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block w-full rounded-2xl border border-white/10 bg-white/5 py-4 text-center text-[15px] font-medium text-zinc-300 transition active:scale-[0.98]"
-                      >
-                        Ver en Drive
-                      </a>
-                    )}
+                    <div className="flex gap-3">
+                      {driveLink && (
+                        <a
+                          href={driveLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex-1 rounded-2xl border border-white/10 bg-white/5 py-4 text-center text-[15px] font-medium text-zinc-300 transition active:scale-[0.98]"
+                        >
+                          Ver foto
+                        </a>
+                      )}
+                      {docLink && (
+                        <a
+                          href={docLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex-1 rounded-2xl border border-white/10 bg-white/5 py-4 text-center text-[15px] font-medium text-zinc-300 transition active:scale-[0.98]"
+                        >
+                          Ver resumen
+                        </a>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

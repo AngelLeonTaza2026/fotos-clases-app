@@ -203,8 +203,9 @@ export async function uploadPhoto({ file, course, week, onProgress = () => {} })
 
   const token = await requestAccessToken({ interactive: false })
 
+  const photoName = buildFileName(file, week)
   const metadata = {
-    name: buildFileName(file, week),
+    name: photoName,
     parents: [weekId],
   }
 
@@ -230,11 +231,15 @@ export async function uploadPhoto({ file, course, week, onProgress = () => {} })
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress(1)
+        let parsed = {}
         try {
-          resolve(JSON.parse(xhr.responseText))
+          parsed = JSON.parse(xhr.responseText)
         } catch {
-          resolve({})
+          parsed = {}
         }
+        // weekId y photoName los necesita createSummaryDoc para dejar el
+        // resumen en la misma carpeta y con el mismo nombre base.
+        resolve({ ...parsed, folderId: weekId, photoName })
       } else {
         reject(new Error(`Error subiendo la foto (${xhr.status}): ${xhr.responseText}`))
       }
@@ -246,4 +251,107 @@ export async function uploadPhoto({ file, course, week, onProgress = () => {} })
 
     xhr.send(form)
   })
+}
+
+
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+/**
+ * Convierte el texto plano del modelo en HTML simple: la primera línea
+ * es el tema y las que empiezan con "- " se vuelven viñetas.
+ */
+function summaryToHtml({ summary, course, week, photoName, photoLink }) {
+  const lines = summary
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+
+  let body = ''
+  let inList = false
+
+  for (const line of lines) {
+    const isBullet = line.startsWith('- ') || line.startsWith('• ')
+    if (isBullet) {
+      if (!inList) {
+        body += '<ul>'
+        inList = true
+      }
+      body += `<li>${escapeHtml(line.slice(2).trim())}</li>`
+    } else {
+      if (inList) {
+        body += '</ul>'
+        inList = false
+      }
+      body += `<p>${escapeHtml(line)}</p>`
+    }
+  }
+  if (inList) body += '</ul>'
+
+  const fecha = new Date().toLocaleString('es-PE', {
+    dateStyle: 'full',
+    timeStyle: 'short',
+  })
+
+  return `<html><body>
+<h1>${escapeHtml(course)} — Semana ${week}</h1>
+<p><i>${escapeHtml(fecha)}</i></p>
+<hr/>
+${body}
+<hr/>
+<p><small>Foto: ${escapeHtml(photoName || '')}${
+    photoLink ? ` — <a href="${escapeHtml(photoLink)}">abrir en Drive</a>` : ''
+  }</small></p>
+<p><small>Resumen generado automáticamente a partir de la foto de la pizarra.
+Puede contener errores de lectura: revísalo antes de estudiar con él.</small></p>
+</body></html>`
+}
+
+/**
+ * Crea un Google Doc con el resumen, en la misma carpeta que la foto.
+ * Subimos HTML y le decimos a Drive que el archivo final es un documento
+ * de Google: Drive hace la conversión solo, sin librerías extra.
+ */
+export async function createSummaryDoc({
+  summary,
+  course,
+  week,
+  folderId,
+  photoName,
+  photoLink,
+}) {
+  const token = await requestAccessToken({ interactive: false })
+
+  const baseName = (photoName || `Semana ${week}`).replace(/\.[a-z0-9]+$/i, '')
+  const metadata = {
+    name: `${baseName} - Resumen`,
+    parents: [folderId],
+    mimeType: 'application/vnd.google-apps.document',
+  }
+
+  const html = summaryToHtml({ summary, course, week, photoName, photoLink })
+
+  const form = new FormData()
+  form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }))
+  form.append('file', new Blob([html], { type: 'text/html' }))
+
+  const res = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink',
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }
+  )
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`No se pudo crear el documento del resumen (${res.status}): ${text}`)
+  }
+
+  return res.json()
 }

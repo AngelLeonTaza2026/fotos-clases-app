@@ -17,14 +17,25 @@ Cuando eliges una foto, la app lee la fecha y hora del momento y:
 2. **Calcula la semana** — cuenta los días transcurridos desde el lunes de
    la semana 1 del ciclo y los divide entre 7.
 3. **Crea las carpetas que falten** en Drive y sube la foto ahí.
+4. **Genera un resumen** del contenido de la pizarra con Gemini y lo guarda
+   como Google Doc en la misma carpeta, junto a la foto.
+
+El resumen nunca bloquea la foto: primero se sube la imagen y solo después
+se analiza. Si la IA falla o se agota la cuota, la foto ya quedó guardada y
+la app solo avisa que el resumen no salió.
 
 Ambos valores se muestran antes de subir y se pueden corregir a mano si la
 detección falla (por ejemplo, si tomas la foto en la noche).
 
 ## Stack
 
-React + Vite + Tailwind. Sin backend: el navegador habla directo con la API
-de Drive usando Google Identity Services. Se despliega como sitio estático.
+React + Vite + Tailwind, desplegado en Vercel. El navegador habla directo con
+la API de Drive usando Google Identity Services.
+
+Hay una única función de servidor, `api/summarize.js`, y existe por seguridad:
+la clave de Gemini no puede vivir en el navegador, donde cualquiera podría
+extraerla del bundle. El Client ID de Google sí puede, porque es público por
+diseño; la clave de Gemini no lo es.
 
 El permiso que pide es `drive.file`, el más acotado que existe: la app solo
 puede ver y modificar los archivos y carpetas **que ella misma crea**. No
@@ -39,7 +50,9 @@ tiene acceso al resto del Drive.
 | `src/utils/weekCalculator.js` | Calcula el número de semana del ciclo. |
 | `src/utils/agenda.js` | Clases del día, progreso de la clase en curso, cuenta regresiva a la siguiente. |
 | `src/utils/courseTheme.js` | Asigna un color a cada curso automáticamente. |
-| `src/driveApi.js` | Autenticación con Google y subida a Drive. |
+| `src/driveApi.js` | Autenticación con Google, subida de la foto y creación del Doc del resumen. |
+| `src/summaryApi.js` | Reduce la foto y pide el resumen al servidor. |
+| `api/summarize.js` | Función serverless: llama a Gemini con la clave secreta. |
 | `src/App.jsx` | Interfaz. |
 
 ## Correr en local
@@ -69,6 +82,9 @@ Al hacer `git push`, Vercel vuelve a desplegar automáticamente.
   orígenes de JavaScript autorizados:
   - `http://localhost:5173`
   - `https://fotos-clases-app.vercel.app`
-- **Vercel** — variable de entorno `VITE_GOOGLE_CLIENT_ID` con ese Client ID.
+- **Vercel** — dos variables de entorno:
+  - `VITE_GOOGLE_CLIENT_ID` — el Client ID de Google (público).
+  - `GEMINI_API_KEY` — la clave de Google AI Studio (secreta). Sin el
+    prefijo `VITE_` a propósito: así Vite nunca la incluye en el bundle.
 
 Al estar en modo *Interno*, solo funciona con cuentas de la institución.
