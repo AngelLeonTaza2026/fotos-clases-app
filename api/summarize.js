@@ -15,6 +15,12 @@ const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions'
 // imagen puede tardar más.
 export const config = { maxDuration: 60 }
 
+const MAX_ATTEMPTS = 3
+const ATTEMPT_TIMEOUT_MS = 20000
+const BACKOFF_MS = 1200
+const MIN_ATTEMPT_MS = 6000 // no arrancar un intento que no alcance a terminar
+const MAX_TOTAL_MS = 52000 // margen bajo el límite de 60s de Vercel
+
 function buildPrompt(course, week) {
   return `Estás analizando la foto de una pizarra de una clase universitaria.
 
@@ -76,53 +82,77 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'No llegó la imagen.' })
   }
 
-  try {
-    const upstream = await fetch(ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        input: [
-          { type: 'text', text: buildPrompt(course, week) },
-          { type: 'image', data: imageBase64, mime_type: mimeType },
-        ],
-      }),
-      signal: AbortSignal.timeout(50000),
-    })
+  const body = JSON.stringify({
+    model: MODEL,
+    input: [
+      { type: 'text', text: buildPrompt(course, week) },
+      { type: 'image', data: imageBase64, mime_type: mimeType },
+    ],
+  })
 
-    if (!upstream.ok) {
-      const detail = await upstream.text()
-      console.error('Gemini respondió', upstream.status, detail)
+  // Los modelos gratuitos devuelven 503 ("sobrecargado") cada tanto, y casi
+  // siempre el siguiente intento funciona. Reintentamos vigilando el reloj:
+  // Vercel mata la función a los 60s, así que nunca empezamos un intento que
+  // no alcance a terminar.
+  const deadline = Date.now() + MAX_TOTAL_MS
+  let lastStatus = null
 
-      // El 429 es el caso realista: se agotó la cuota gratuita del día.
-      if (upstream.status === 429) {
-        return res.status(429).json({
-          error: 'Se agotó la cuota gratuita de Gemini por ahora. Intenta más tarde.',
-        })
-      }
-      return res.status(502).json({
-        error: `El servicio de resumen falló (${upstream.status}).`,
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const remaining = deadline - Date.now()
+    if (remaining < MIN_ATTEMPT_MS) break
+
+    try {
+      const upstream = await fetch(ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body,
+        signal: AbortSignal.timeout(Math.min(ATTEMPT_TIMEOUT_MS, remaining)),
       })
+
+      if (upstream.ok) {
+        const summary = extractText(await upstream.json())
+        if (summary) return res.status(200).json({ summary })
+        console.error('Gemini respondió 200 pero sin texto')
+        lastStatus = 'sin-texto'
+      } else {
+        lastStatus = upstream.status
+        const detail = await upstream.text()
+        console.error(`Gemini respondió ${upstream.status} (intento ${attempt})`, detail)
+
+        // Cuota agotada: reintentar no ayuda, solo quema tiempo.
+        if (upstream.status === 429) {
+          return res.status(429).json({
+            error:
+              'Se agotó la cuota gratuita de Gemini por ahora. ' +
+              'La foto sí se guardó; vuelve a intentar el resumen más tarde.',
+          })
+        }
+        // Un 4xx distinto de 429 es culpa nuestra (petición mal formada):
+        // reintentar daría el mismo resultado.
+        if (upstream.status < 500) break
+      }
+    } catch (err) {
+      const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError'
+      lastStatus = timedOut ? 'timeout' : 'red'
+      console.error(`Fallo de red en el intento ${attempt}:`, err?.message || err)
     }
 
-    const data = await upstream.json()
-    const summary = extractText(data)
-
-    if (!summary) {
-      return res.status(502).json({ error: 'El modelo no devolvió texto.' })
+    // Espera creciente entre intentos, sin pasarnos del presupuesto.
+    const backoff = BACKOFF_MS * attempt
+    if (attempt < MAX_ATTEMPTS && deadline - Date.now() > MIN_ATTEMPT_MS + backoff) {
+      await new Promise((r) => setTimeout(r, backoff))
     }
-
-    return res.status(200).json({ summary })
-  } catch (err) {
-    console.error(err)
-    const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError'
-    return res.status(504).json({
-      error: timedOut
-        ? 'El análisis tardó demasiado. Intenta de nuevo.'
-        : 'No se pudo contactar al servicio de resumen.',
-    })
   }
+
+  return res.status(502).json({
+    error:
+      lastStatus === 'timeout'
+        ? 'El análisis tardó demasiado. La foto sí se guardó.'
+        : 'El servicio de resumen no respondió bien' +
+          (lastStatus ? ` (${lastStatus})` : '') +
+          '. Suele ser temporal; la foto sí se guardó.',
+  })
 }
